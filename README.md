@@ -28,15 +28,63 @@ CV project/
     └── member3/            # Matplotlib visualisations (PNG output)
 ```
 
-## Build & Run (WSL)
+## Build & Run
 
+### Prerequisites
+- CMake 3.10+
+- C++17 Compiler (GCC/Clang/MSVC/MinGW) with OpenMP support
+- Python 3.8+
+
+### 0. Setup Virtual Environment (Recommended)
+
+#### Windows (PowerShell)
+```powershell
+# Create and activate environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# Install dependencies (this includes the pybind11 headers needed for compilation)
+pip install numpy opencv-python matplotlib pybind11
+```
+
+#### Linux / macOS
 ```bash
-cd "CV project"
+python3 -m venv .venv
+source .venv/bin/activate
+pip install numpy opencv-python matplotlib pybind11
+```
+
+### 1. Build C++ Extension
+
+#### Windows (PowerShell + MinGW)
+```powershell
+# Create build directory
+if (!(Test-Path build)) { mkdir build }
+
+# Configure CMake (Ensure it finds your active Python environment)
+# If using a venv, activate it first or set -DPython_EXECUTABLE="Path/To/python.exe"
+cmake -S . -B build -G "MinGW Makefiles" -DPYBIND11_FINDPYTHON=ON
+
+# Compile
+cmake --build build --config Release
+```
+
+#### Linux / macOS / WSL
+```bash
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
-cd ../python
-python3 pipeline.py ../images/4.2.07.tiff
+cd ..
 ```
 
-**Output files:** `week1_gf_visual.png`, `week1_distribution_visual.png`
+### 2. Run Python Pipeline
+
+```powershell
+# From project root
+python python/pipeline.py [optional_image_path]
+```
+
+**Output files:**
+- `week1_gf_visual.png` (Guided Filter maps)
+- `week1_distribution_visual.png` (Histogram & CDFs)
+- `week2_result.png` (Final Enhanced Image)
