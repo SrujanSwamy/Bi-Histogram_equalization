@@ -1,0 +1,92 @@
+# =========================
+# CMake / C++ build outputs
+# =========================
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+Testing/
+
+# Object / binary artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.exp
+*.pdb
+*.ilk
+
+# Ninja
+*.ninja
+.ninja_deps
+.ninja_log
+
+# =========================
+# Python artifacts
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Packaging
+*.egg-info/
+dist/
+build_python/
+pip-wheel-metadata/
+
+# pybind11 module outputs
+he_core*.so
+he_core*.pyd
+python/he_core*.so
+python/he_core*.pyd
+
+# =========================
+# Output images (visualizations)
+week1_gf_visual.png
+week1_distribution_visual.png
+week2_result.png
+week2_radius_map.png
+week2_busyness_map.png
+*.png
+!test_image.jpg
+
+# Editor / OS files
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# =========================
+# Generated project outputs
+# =========================
+week1_*.png
+week2_*.png
+*.png
+
+# Archives
+*.zip
