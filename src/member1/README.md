@@ -88,6 +88,14 @@ A lower PSI is better — it means the algorithm did not over-brighten the image
 
 ---
 
+### Week 3: Continuous Metrics for Video
+
+-   **Contribution**: Integrated the existing five mathematical metrics into the main Python video pipeline.
+-   **Implementation**: The `pipeline.py` script now calls `compute_ambe`, `compute_std`, `compute_cii`, `compute_de`, and `compute_psi` periodically on the video stream (e.g., every 30 frames).
+-   **Impact**: This provides continuous, real-time, quantitative feedback on the algorithm's performance during video processing. It allows us to monitor how temporal smoothing and other adaptive parameters affect the output quality from moment to moment, ensuring the enhancement remains stable and effective over time.
+
+---
+
 ## How It Connects to the Rest of the Pipeline
 
 ```

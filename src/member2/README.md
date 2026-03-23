@@ -98,6 +98,18 @@ Output: modified_cdf[256]  — ready for pixel remapping in Week 2
 
 ---
 
+### Week 3: Temporal Smoothing
+
+-   **Contribution**: Designed and implemented the `TemporalSmoother` class in C++ to stabilize video processing.
+-   **Implementation**:
+    -   A `TemporalSmoother` class was created in `src/core.cpp`.
+    -   It uses three `std::deque<double>` buffers to store the most recent 5 values for the mean intensity (`I_m`), the low plateau limit (`PL_L`), and the high plateau limit (`PL_H`).
+    -   The `update_and_get_smoothed()` method pushes new values to the deques, removes the oldest values if the size exceeds 5, and returns the simple moving average of the values in each buffer.
+    -   The `apply_transformation` function was updated to accept a `double I_m` to work with the smoothed, continuous value.
+-   **Impact**: This change is critical for video processing. It prevents drastic, frame-to-frame shifts in brightness and contrast that would otherwise cause a distracting "flickering" effect. By averaging these key parameters over a short time window, the enhancement evolves smoothly, leading to a much more visually consistent and pleasing result in the output video.
+
+---
+
 ## How It Connects to the Rest of the Pipeline
 
 ```

@@ -105,3 +105,13 @@ compute_gf_coefficients  ──►  a_coeff[H×W],  b_coeff[H×W]
 All pipeline data  ──►  save_visualizations  ──►  week1_gf_visual.png
                                               ──►  week1_distribution_visual.png
 ```
+
+### Week 3: Unified Pipeline & System Integration
+
+-   **Contribution**: Overhauled the Python driver script and C++ backend to create a unified, robust pipeline for both images and videos, and solved critical system-level issues.
+-   **Implementation**:
+    1.  **Unified Python Pipeline**: The `python/pipeline.py` script was re-engineered to accept a single input argument. It now automatically detects whether the input is an image, a video file, or a webcam feed (`"0"`) and routes to the appropriate processing loop.
+    2.  **Temporal Smoother Integration**: The Python pipeline now instantiates the C++ `TemporalSmoother` class for video processing, feeding it new statistical values each frame and using the smoothed results in the enhancement algorithm.
+    3.  **Thread Control**: A `set_thread_count(int n)` function was added to the C++ core and exposed via Pybind11. The Python script calls this on startup to enforce a consistent level of parallelism (4 threads) as per the system design.
+    4.  **Windows DLL Hot-Fix**: Diagnosed and fixed a `DLL load failed` error by adding a patch to `pipeline.py`. This patch explicitly adds the MinGW binary path to the DLL search path on Windows, allowing Python to find the `libgomp-1.dll` (OpenMP runtime) dependency.
+-   **Impact**: These contributions transformed the project from a set of components into a cohesive, usable application. The unified pipeline simplifies testing and demonstration, the thread control ensures predictable performance, and the DLL fix is essential for making the project runnable on the target Windows platform.
