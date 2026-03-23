@@ -1,5 +1,7 @@
 #include <omp.h>
 #include <vector>
+#include <deque>
+#include <numeric>
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -12,10 +14,50 @@
 namespace py = pybind11;
 
 // ============================================================================
-//  Wk.2 Member 1 — Data & Color Reconstruction
+//  Week 3: Member 3 — Systems Lead (Thread Control)
 // ============================================================================
 
-// extract_v_channel is now provided by "member1/data_metrics.h"
+void set_thread_count(int n) {
+    if (n > 0) {
+        omp_set_num_threads(n);
+    }
+}
+
+// ============================================================================
+//  Week 3: Member 2 — Algorithms Lead (Temporal Smoother)
+// ============================================================================
+
+class TemporalSmoother {
+public:
+    TemporalSmoother() {}
+
+    py::tuple update_and_get_smoothed(double Im, double PLL, double PLH) {
+        // Manage buffer sizes (keep last 5 frames)
+        if (buf_Im.size() >= 5)  buf_Im.pop_front();
+        if (buf_PLL.size() >= 5) buf_PLL.pop_front();
+        if (buf_PLH.size() >= 5) buf_PLH.pop_front();
+
+        buf_Im.push_back(Im);
+        buf_PLL.push_back(PLL);
+        buf_PLH.push_back(PLH);
+
+        // Compute averages
+        double avg_Im = std::accumulate(buf_Im.begin(), buf_Im.end(), 0.0) / buf_Im.size();
+        double avg_PLL = std::accumulate(buf_PLL.begin(), buf_PLL.end(), 0.0) / buf_PLL.size();
+        double avg_PLH = std::accumulate(buf_PLH.begin(), buf_PLH.end(), 0.0) / buf_PLH.size();
+
+        return py::make_tuple(avg_Im, avg_PLL, avg_PLH);
+    }
+
+private:
+    std::deque<double> buf_Im;
+    std::deque<double> buf_PLL;
+    std::deque<double> buf_PLH;
+};
+
+// ============================================================================
+//  Wk.2 Member 1 — Data & Color Reconstruction
+// ============================================================================
 
 py::array_t<uint8_t> merge_hsv_to_rgb(py::array_t<uint8_t> h_arr, py::array_t<uint8_t> s_arr, py::array_t<uint8_t> v_arr) {
     auto h_buf = h_arr.request(), s_buf = s_arr.request(), v_buf = v_arr.request();
@@ -46,7 +88,6 @@ py::array_t<uint8_t> merge_hsv_to_rgb(py::array_t<uint8_t> h_arr, py::array_t<ui
         else                 { r = C; g = 0; b = X; }
 
         int out_idx = i * 3;
-        // FIX 1: Strict Clamping to prevent integer overflow (black splotches)
         ptr_out[out_idx + 0] = static_cast<uint8_t>(std::clamp((r + m_val) * 255.0f, 0.0f, 255.0f));
         ptr_out[out_idx + 1] = static_cast<uint8_t>(std::clamp((g + m_val) * 255.0f, 0.0f, 255.0f));
         ptr_out[out_idx + 2] = static_cast<uint8_t>(std::clamp((b + m_val) * 255.0f, 0.0f, 255.0f));
@@ -95,7 +136,7 @@ py::array_t<double> compute_busyness_map(py::array_t<double> sum_ii, py::array_t
     double* b_ptr = static_cast<double*>(busyness.request().ptr);
     
     double min_var = 1e15, max_var = -1.0;
-    int r = 1; // 3x3 window for texture analysis
+    int r = 1;
 
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
@@ -112,7 +153,6 @@ py::array_t<double> compute_busyness_map(py::array_t<double> sum_ii, py::array_t
             double N = (double)((r1 - r0 + 1) * (c1 - c0 + 1));
 
             double mean = sum_val / N;
-            // FIX 2: Clamp variance to prevent negative values crashing the map
             double var = std::max(0.0, (sq_sum_val / N) - (mean * mean));
             
             b_ptr[i * cols + j] = var;
@@ -202,7 +242,7 @@ py::array_t<double> get_normalized_a(py::array_t<double> a_arr) {
     return a_hat;
 }
 
-py::array_t<uint8_t> apply_transformation(py::array_t<uint8_t> v_arr, py::array_t<double> a_hat_arr, py::array_t<double> cdf_arr, double mu, double kappa, uint8_t I_m) {
+py::array_t<uint8_t> apply_transformation(py::array_t<uint8_t> v_arr, py::array_t<double> a_hat_arr, py::array_t<double> cdf_arr, double mu, double kappa, double I_m) {
     auto v_buf = v_arr.request();
     int rows = v_buf.shape[0], cols = v_buf.shape[1];
     uint8_t* v_ptr = static_cast<uint8_t*>(v_buf.ptr);
@@ -219,21 +259,18 @@ py::array_t<uint8_t> apply_transformation(py::array_t<uint8_t> v_arr, py::array_
             uint8_t val = v_ptr[idx];
             double a_hat = a_ptr[idx];
             
-            // Compute enhancement parameter lambda
             double lam = (a_hat < mu) ? (1.0 - kappa * mu) : ((1.0 - kappa * mu) + kappa * a_hat);
-            
             double cdf_val = cdf_lut[val]; 
             double transformed = 0.0;
 
-            // FIX 3: True Bi-Histogram Piecewise Transformation
-            if (val <= I_m) {
-                // Low sub-histogram [0, I_m]
-                double x_L = (double)val / (double)I_m;
+            if ((double)val <= I_m) {
+                double den = std::max(1e-5, I_m);
+                double x_L = (double)val / den;
                 transformed = I_m * (x_L + (cdf_val - x_L) * lam);
             } else {
-                // High sub-histogram [I_m + 1, 255]
-                double x_H = (double)(val - (I_m + 1)) / (double)(255 - (I_m + 1));
-                transformed = (I_m + 1) + (255 - (I_m + 1)) * (x_H + (cdf_val - x_H) * lam);
+                double den = std::max(1e-5, 255.0 - I_m);
+                double x_H = ((double)val - I_m) / den;
+                transformed = I_m + (255.0 - I_m) * (x_H + (cdf_val - x_H) * lam);
             }
 
             out_ptr[idx] = static_cast<uint8_t>(std::clamp(transformed, 0.0, 255.0));
@@ -249,8 +286,15 @@ py::array_t<uint8_t> apply_transformation(py::array_t<uint8_t> v_arr, py::array_
 PYBIND11_MODULE(he_core, m) {
     m.doc() = "Edge-Enhancing Bi-Histogram Equalisation C++ Backend";
 
+    // ---- Week 3 Additions ----
+    m.def("set_thread_count", &set_thread_count, "Set number of OpenMP threads.");
+    
+    py::class_<TemporalSmoother>(m, "TemporalSmoother")
+        .def(py::init<>())
+        .def("update_and_get_smoothed", &TemporalSmoother::update_and_get_smoothed,
+             "Push new stats and get averaged values (Im, PL_L, PL_H).");
+
     // ---- Week 1 Functions ----
-    // Member 1 — Data & Metrics
     m.def("extract_v_channel", &extract_v_channel, "Extract V channel from RGB/BGR image.");
     m.def("compute_ambe", &compute_ambe, "Mean brightness of V channel.");
     m.def("compute_std", &compute_std, "Standard deviation of V channel.");
@@ -258,29 +302,20 @@ PYBIND11_MODULE(he_core, m) {
     m.def("compute_de", &compute_de, "Discrete Entropy.");
     m.def("compute_psi", &compute_psi, "Perceptual Sharpness Index.");
 
-    // Member 2 — Statistics & Plateau Limits
     m.def("compute_histogram", &compute_histogram, "Compute 256-bin histogram.");
     m.def("compute_pdf", &compute_pdf, "Compute PDF from histogram.");
     m.def("compute_cdf", &compute_cdf, "Compute CDF from PDF.");
     m.def("segment_histogram", &segment_histogram, "Segment histogram at mean.");
     m.def("compute_apl_and_clip", &compute_apl_and_clip, "Compute APL and return modified CDF.");
 
-    // Member 3 — Guided Filter (Week 1)
     m.def("compute_gf_coefficients", &compute_gf_coefficients, "Compute GF coefficients (Week 1 static).");
     m.def("get_omp_max_threads", []() { return omp_get_max_threads(); }, "Get max OpenMP threads.");
 
     // ---- Week 2 Additions ----
-    
-    // Member 1
     m.def("merge_hsv_to_rgb", &merge_hsv_to_rgb, "Merge H, S, V to RGB (Week 2).");
-
-    // Member 2
     m.def("compute_integral_images", &compute_integral_images, "Compute Sum and Squared Sum Integral Images.");
-    // Note: compute_busyness_map signature takes (sum, sq_sum, rows, cols)
     m.def("compute_busyness_map", &compute_busyness_map, "Compute variance-busyness map (Week 2).");
     m.def("map_dynamic_radius", &map_dynamic_radius, "Map busyness to dynamic radius.");
-
-    // Member 3
     m.def("adaptive_guided_filter", &adaptive_guided_filter, "Compute adaptive a, b coefficients.");
     m.def("get_normalized_a", &get_normalized_a, "Normalize 'a' coefficient.");
     m.def("apply_transformation", &apply_transformation, "Apply final bi-histogram transformation.");
