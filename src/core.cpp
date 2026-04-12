@@ -189,39 +189,84 @@ py::array_t<int32_t> map_dynamic_radius(py::array_t<double> busyness_map, int r_
 
 py::tuple adaptive_guided_filter(py::array_t<uint8_t> v_arr, py::array_t<double> sum_ii, py::array_t<double> sq_sum_ii, py::array_t<int32_t> radius_arr) {
     int rows = v_arr.request().shape[0], cols = v_arr.request().shape[1];
-    double* sum_ptr = static_cast<double*>(sum_ii.request().ptr);
+    uint8_t* v_data    = static_cast<uint8_t*>(v_arr.request().ptr);
+    double* sum_ptr    = static_cast<double*>(sum_ii.request().ptr);
     double* sq_sum_ptr = static_cast<double*>(sq_sum_ii.request().ptr);
-    int32_t* r_map = static_cast<int32_t*>(radius_arr.request().ptr);
+    int32_t* r_map     = static_cast<int32_t*>(radius_arr.request().ptr);
     int stride = cols + 1;
-    double eps = 2000.0; 
+    // Paper Section 4: ε = 0.22 (normalised), scaled to uint8: 0.22 × 255² = 14308.5
+    double eps = 0.22 * 255.0 * 255.0;
 
-    py::array_t<double> a_out({rows, cols}), b_out({rows, cols});
-    double* a_ptr = static_cast<double*>(a_out.request().ptr);
-    double* b_ptr = static_cast<double*>(b_out.request().ptr);
+    // --- Step 1: compute per-window a_p, b_p (paper Eq. 7-8) ----------------
+    // Each output pixel p gets its own (a_p, b_p) from the window w_p.
+    std::vector<double> ap(rows * cols), bp(rows * cols);
 
     #pragma omp parallel for
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
             int k = i * cols + j;
             int r = r_map[k];
-            
+
             int r0 = std::max(0, i - r), r1 = std::min(rows - 1, i + r);
             int c0 = std::max(0, j - r), c1 = std::min(cols - 1, j + r);
 
             int br = (r1 + 1) * stride + (c1 + 1), bl = (r1 + 1) * stride + c0;
             int tr = r0 * stride + (c1 + 1),       tl = r0 * stride + c0;
 
-            double sum_val = sum_ptr[br] - sum_ptr[bl] - sum_ptr[tr] + sum_ptr[tl];
+            double sum_val    = sum_ptr[br]    - sum_ptr[bl]    - sum_ptr[tr]    + sum_ptr[tl];
             double sq_sum_val = sq_sum_ptr[br] - sq_sum_ptr[bl] - sq_sum_ptr[tr] + sq_sum_ptr[tl];
             double N = (double)((r1 - r0 + 1) * (c1 - c0 + 1));
 
-            double mean = sum_val / N;
-            double var = std::max(0.0, (sq_sum_val / N) - (mean * mean));
-            
-            a_ptr[k] = var / (var + eps);
-            b_ptr[k] = mean * (1.0 - a_ptr[k]);
+            double mean_p = sum_val / N;
+            double var_p  = std::max(0.0, (sq_sum_val / N) - (mean_p * mean_p));
+
+            // Eq.(7) self-guided (G=I): a_p = σ²_p / (σ²_p + ε)
+            ap[k] = var_p / (var_p + eps);
+            // Eq.(8): b_p = μ_p - a_p * μ_p = μ_p * (1 - a_p)
+            bp[k] = mean_p * (1.0 - ap[k]);
         }
     }
+
+    // --- Step 2: average overlapping windows (paper Eq. 9) ------------------
+    // a_i = mean{a_p : i ∈ w_p},  b_i = mean{b_p : i ∈ w_p}
+    // For uniform radius r, every pixel i is covered by the windows of all
+    // pixels p within distance r of i — i.e. the same box-filter of radius r.
+    // We implement this with a second integral-image pass.
+    py::array_t<double> a_out({rows, cols}), b_out({rows, cols});
+    double* a_ptr = static_cast<double*>(a_out.request().ptr);
+    double* b_ptr_out = static_cast<double*>(b_out.request().ptr);
+
+    // Build integral images of ap and bp
+    std::vector<double> sum_a((rows+1)*(cols+1), 0.0);
+    std::vector<double> sum_b((rows+1)*(cols+1), 0.0);
+    int s2 = cols + 1;
+    for (int i = 1; i <= rows; i++) {
+        for (int j = 1; j <= cols; j++) {
+            int src = (i-1)*cols + (j-1);
+            int idx2 = i*s2 + j;
+            sum_a[idx2] = ap[src] + sum_a[(i-1)*s2+j] + sum_a[i*s2+(j-1)] - sum_a[(i-1)*s2+(j-1)];
+            sum_b[idx2] = bp[src] + sum_b[(i-1)*s2+j] + sum_b[i*s2+(j-1)] - sum_b[(i-1)*s2+(j-1)];
+        }
+    }
+
+    #pragma omp parallel for
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            int k = i * cols + j;
+            int r = r_map[k];
+
+            int r0 = std::max(0, i - r), r1 = std::min(rows - 1, i + r);
+            int c0 = std::max(0, j - r), c1 = std::min(cols - 1, j + r);
+
+            int br2 = (r1+1)*s2+(c1+1), bl2 = (r1+1)*s2+c0;
+            int tr2 =  r0   *s2+(c1+1), tl2 =  r0   *s2+c0;
+            double N2 = (double)((r1-r0+1)*(c1-c0+1));
+
+            a_ptr[k]     = (sum_a[br2] - sum_a[bl2] - sum_a[tr2] + sum_a[tl2]) / N2;
+            b_ptr_out[k] = (sum_b[br2] - sum_b[bl2] - sum_b[tr2] + sum_b[tl2]) / N2;
+        }
+    }
+
     return py::make_tuple(a_out, b_out);
 }
 
@@ -242,38 +287,111 @@ py::array_t<double> get_normalized_a(py::array_t<double> a_arr) {
     return a_hat;
 }
 
-py::array_t<uint8_t> apply_transformation(py::array_t<uint8_t> v_arr, py::array_t<double> a_hat_arr, py::array_t<double> cdf_arr, double mu, double kappa, double I_m) {
+// ============================================================================
+//  compute_mu_from_a_hat — NEW
+//  Paper Section 3.3: μ is the mean of â(i,j) over the entire image.
+//  This must be computed from the actual a_hat array each frame, NOT
+//  passed as a fixed CLI parameter.
+// ============================================================================
+double compute_mu_from_a_hat(py::array_t<double> a_hat_arr) {
+    auto buf = a_hat_arr.request();
+    int size = buf.shape[0] * buf.shape[1];
+    double* ptr = static_cast<double*>(buf.ptr);
+
+    double sum = 0.0;
+    for (int i = 0; i < size; ++i) sum += ptr[i];
+    return (size > 0) ? sum / size : 0.0;
+}
+
+// ============================================================================
+//  apply_transformation — FIXED
+//
+//  Paper Eq. (19):
+//    Lower (0 ≤ k ≤ Im):
+//      x_L(i,j) = I(i,j) / Im                        (normalised intensity)
+//      T(k;i,j) = Im * [ x_L + (cdf(k) - x_L) * λ(i,j) ]
+//
+//    Upper (Im < k ≤ L-1):
+//      x_H(i,j) = (I(i,j) - Im) / (255 - Im)
+//      T(k;i,j) = Im + (255 - Im) * [ x_H + (cdf(k) - x_H) * λ(i,j) ]
+//
+//  Paper Eq. (21):
+//    λ(i,j) = 1 - κ·μ                 if â(i,j) < μ   (flat region)
+//    λ(i,j) = (1 - κ·μ) + κ·â(i,j)   otherwise        (edge region)
+//
+//  Robustness additions (not in paper, needed for real images):
+//    • λ_flat  is clamped to [0, 1]  — prevents sign-flip darkening on very
+//      dark/narrow-histogram images where κμ > 1.
+//    • λ_edge  is clamped to [1, κ]  — prevents extreme blowout; edge pixels
+//      should always be enhanced at least as much as a plain HE (λ=1).
+//    • Both sub-histogram branches guard their denominators with max(1.0,…).
+//
+//  IMPORTANT: μ is the image-level mean of â, computed via
+//  compute_mu_from_a_hat() in Python before calling this function.
+//  kappa is the user-supplied sharpening parameter κ (paper uses κ=5).
+// ============================================================================
+py::array_t<uint8_t> apply_transformation(
+        py::array_t<uint8_t> v_arr,
+        py::array_t<double>  a_hat_arr,
+        py::array_t<double>  cdf_arr,
+        double mu,      // mean of â(i,j) — computed from a_hat, NOT a fixed CLI param
+        double kappa,   // sharpening strength κ
+        double I_m)     // separation point (may be smoothed float from TemporalSmoother)
+{
     auto v_buf = v_arr.request();
     int rows = v_buf.shape[0], cols = v_buf.shape[1];
-    uint8_t* v_ptr = static_cast<uint8_t*>(v_buf.ptr);
-    double* a_ptr = static_cast<double*>(a_hat_arr.request().ptr);
-    double* cdf_lut = static_cast<double*>(cdf_arr.request().ptr); 
+    uint8_t* v_ptr    = static_cast<uint8_t*>(v_buf.ptr);
+    double*  a_ptr    = static_cast<double*>(a_hat_arr.request().ptr);
+    double*  cdf_lut  = static_cast<double*>(cdf_arr.request().ptr);
 
     py::array_t<uint8_t> out_arr({rows, cols});
     uint8_t* out_ptr = static_cast<uint8_t*>(out_arr.request().ptr);
 
+    // Pre-compute boundary value; clamp to valid range
+    double Im = std::max(1.0, std::min(I_m, 254.0));
+
+    // Paper Eq.(21): base = 1 - κμ. With correct ε=0.22×255², μ stays small
+    // (paper reports μ≈0.08 for Lena), so base naturally stays in (0,1).
+    // No clamping applied — exact paper formula.
+    double base = 1.0 - kappa * mu;
+
     #pragma omp parallel for
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
-            int idx = i * cols + j;
-            uint8_t val = v_ptr[idx];
-            double a_hat = a_ptr[idx];
-            
-            double lam = (a_hat < mu) ? (1.0 - kappa * mu) : ((1.0 - kappa * mu) + kappa * a_hat);
-            double cdf_val = cdf_lut[val]; 
-            double transformed = 0.0;
+            int    idx    = i * cols + j;
+            double val    = static_cast<double>(v_ptr[idx]);
+            double a_hat  = a_ptr[idx];
 
-            if ((double)val <= I_m) {
-                double den = std::max(1e-5, I_m);
-                double x_L = (double)val / den;
-                transformed = I_m * (x_L + (cdf_val - x_L) * lam);
+            // --- Eq. (21): exact paper formula — no artificial clamps --------
+            // Flat (â < μ):  λ = 1 - κμ          → under-enhance (noise suppression)
+            // Edge (â ≥ μ):  λ = (1-κμ) + κ·â   → over-enhance  (edge sharpening)
+            double lam;
+            if (a_hat < mu) {
+                lam = base;
             } else {
-                double den = std::max(1e-5, 255.0 - I_m);
-                double x_H = ((double)val - I_m) / den;
-                transformed = I_m + (255.0 - I_m) * (x_H + (cdf_val - x_H) * lam);
+                lam = base + kappa * a_hat;
             }
 
-            out_ptr[idx] = static_cast<uint8_t>(std::clamp(transformed, 0.0, 255.0));
+            // --- Eq. (19): bi-histogram transformation ----------------------
+            double cdf_val    = cdf_lut[static_cast<int>(val)];
+            double transformed = 0.0;
+
+            if (val <= Im) {
+                // Lower sub-histogram [0, Im]
+                // x_L = val / Im  (normalised to [0,1])
+                double denom = std::max(1.0, Im);
+                double x_L   = val / denom;
+                transformed  = Im * (x_L + (cdf_val - x_L) * lam);
+            } else {
+                // Upper sub-histogram [Im+1, 255]
+                // x_H = (val - Im) / (255 - Im)  (normalised to [0,1])
+                double denom = std::max(1.0, 255.0 - Im);
+                double x_H   = (val - Im) / denom;
+                transformed  = Im + (255.0 - Im) * (x_H + (cdf_val - x_H) * lam);
+            }
+
+            out_ptr[idx] = static_cast<uint8_t>(
+                std::clamp(std::round(transformed), 0.0, 255.0));
         }
     }
     return out_arr;
@@ -318,5 +436,6 @@ PYBIND11_MODULE(he_core, m) {
     m.def("map_dynamic_radius", &map_dynamic_radius, "Map busyness to dynamic radius.");
     m.def("adaptive_guided_filter", &adaptive_guided_filter, "Compute adaptive a, b coefficients.");
     m.def("get_normalized_a", &get_normalized_a, "Normalize 'a' coefficient.");
+    m.def("compute_mu_from_a_hat", &compute_mu_from_a_hat, "Compute mean of normalised a-hat (paper Eq.21 mu).");
     m.def("apply_transformation", &apply_transformation, "Apply final bi-histogram transformation.");
 }

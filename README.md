@@ -1,90 +1,196 @@
-# Edge-Enhancing Bi-Histogram Equalisation using Guided Image Filter
-### Week 1 — C++ / Python Hybrid Implementation
+# Edge-Enhancing Bi-Histogram Equalization (Final)
 
-This project implements the paper in three modular components, one per team member.
-Each member folder contains its own README with full implementation details.
+This project implements an edge-enhancing bi-histogram equalization pipeline with:
+- C++ kernels exposed to Python via Pybind11 (`he_core`)
+- OpenMP acceleration and runtime thread control
+- Unified image/video/webcam processing in Python
+- Benchmark and visualization utilities
 
-| Member | Folder | Responsibility |
-|---|---|---|
-| [src/member1/README.md](src/member1/README.md) | `src/member1/` | Colour-space extraction + evaluation metrics |
-| [src/member2/README.md](src/member2/README.md) | `src/member2/` | Histogram statistics + adaptive plateau clipping |
-| [src/member3/README.md](src/member3/README.md) | `src/member3/` + `python/member3/` | Guided filter coefficients + visualisations |
+The current codebase is aligned to the paper-oriented pipeline used in your final version, including dynamic `mu` from guided-filter output and `kappa` control from CLI.
 
----
+## Project Structure
 
-## Architecture
-
-```
+```text
 CV project/
-├── CMakeLists.txt          # Build: pybind11 + OpenMP → he_core.so
+├── CMakeLists.txt
+├── build_he_core.ps1
 ├── src/
-│   ├── common.h            # Shared types (npy<T> alias, clamp_idx)
-│   ├── core.cpp            # Thin pybind11 binder — exposes all 13 functions
-│   ├── member1/            # See src/member1/README.md
-│   ├── member2/            # See src/member2/README.md
-│   └── member3/            # See src/member3/README.md
-└── python/
-    ├── pipeline.py         # Main driver — calls all C++ functions, Steps 1–7
-    └── member3/            # Matplotlib visualisations (PNG output)
+│   ├── core.cpp
+│   ├── common.h
+│   ├── member1/
+│   ├── member2/
+│   ├── member3/
+│   └── test.cpp
+├── python/
+│   └── pipeline.py
+├── benchmark_omp.py
+├── generate_visuals.py
+├── requirements.txt
+└── dataset/
+        ├── images/
+        └── videos/
 ```
 
-## Build & Run
+## Prerequisites
 
-### Prerequisites
-- CMake 3.10+
-- C++17 Compiler (GCC/Clang/MSVC/MinGW) with OpenMP support
-- Python 3.8+
+- Python 3.10+
+- CMake 3.15+
+- MSYS2 UCRT64 MinGW toolchain on Windows:
+    - `C:/msys64/ucrt64/bin/g++.exe`
+    - `C:/msys64/ucrt64/bin/gcc.exe`
 
-### 0. Setup Virtual Environment (Recommended)
+## Setup Commands (Windows PowerShell)
 
-#### Windows (PowerShell)
+Run from project root:
+
 ```powershell
-# Create and activate environment
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-# Install dependencies (this includes the pybind11 headers needed for compilation)
-pip install numpy opencv-python matplotlib pybind11
+& .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install pybind11
 ```
 
-#### Linux / macOS
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install numpy opencv-python matplotlib pybind11
-```
+## Build Commands (Recommended: One-File Automation)
 
-### 1. Build C++ Extension
-
-#### Windows (PowerShell + MinGW)
-```powershell
-# Create build directory
-if (!(Test-Path build)) { mkdir build }
-
-# Configure CMake (Ensure it finds your active Python environment)
-# If using a venv, activate it first or set -DPython_EXECUTABLE="Path/To/python.exe"
-cmake -S . -B build -G "MinGW Makefiles" -DPYBIND11_FINDPYTHON=ON
-
-# Compile
-cmake --build build --config Release
-```
-
-#### Linux / macOS / WSL
-```bash
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
-cd ..
-```
-
-### 2. Run Python Pipeline
+Use the provided script that handles cache issues and validates import:
 
 ```powershell
-# From project root
-python python/pipeline.py [optional_image_path]
+powershell -ExecutionPolicy Bypass -File .\build_he_core.ps1
 ```
 
-**Output files:**
-- `week1_gf_visual.png` (Guided Filter maps)
-- `week1_distribution_visual.png` (Histogram & CDFs)
-- `week2_result.png` (Final Enhanced Image)
+Useful variants:
+
+```powershell
+# Skip reinstalling python packages
+powershell -ExecutionPolicy Bypass -File .\build_he_core.ps1 -SkipInstall
+
+# Force clean rebuild
+powershell -ExecutionPolicy Bypass -File .\build_he_core.ps1 -Clean
+```
+
+## Build Commands (Manual Alternative)
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+$VENV_PY = (Resolve-Path .\.venv\Scripts\python.exe).Path
+$PYBIND11_DIR = & $VENV_PY -m pybind11 --cmakedir
+
+if (Test-Path build) { Remove-Item -Recurse -Force build }
+
+cmake -S . -B build -G "MinGW Makefiles" `
+    -DCMAKE_BUILD_TYPE=Release `
+    -DCMAKE_C_COMPILER="C:/msys64/ucrt64/bin/gcc.exe" `
+    -DCMAKE_CXX_COMPILER="C:/msys64/ucrt64/bin/g++.exe" `
+    -Dpybind11_DIR="$PYBIND11_DIR" `
+    -DPYTHON_EXECUTABLE="$VENV_PY"
+
+cmake --build build --config Release -j 4
+```
+
+## Rebuild After C++ Changes
+
+If you edit `src/core.cpp`, only rebuild (no reconfigure needed):
+
+```powershell
+cmake --build build --config Release -j 4
+```
+
+Re-run full configure only if:
+- `CMakeLists.txt` changed
+- toolchain/compiler changed
+- pybind11/python path changed
+- `build/` was deleted
+
+## Run Commands
+
+### 1) Main Pipeline (Image)
+
+```powershell
+python python/pipeline.py dataset/images/4.1.03.tiff
+```
+
+With diff panel:
+
+```powershell
+python python/pipeline.py dataset/images/4.1.05.tiff --show-diff --diff-gain 6 --threads 4
+```
+
+### 2) Main Pipeline (Video File)
+
+```powershell
+python python/pipeline.py dataset/videos/Q001.mp4 --threads 4
+```
+
+With stronger sharpening:
+
+```powershell
+python python/pipeline.py dataset/videos/M001.mp4 --kappa 5.0 --show-diff --diff-gain 6 --threads 4
+```
+
+### 3) Main Pipeline (Webcam)
+
+```powershell
+python python/pipeline.py 0 --threads 4
+```
+
+### 4) OpenMP Benchmark
+
+```powershell
+python benchmark_omp.py --video dataset/videos/Q001.mp4 --frames 100
+```
+
+### 5) Visualization Figures
+
+```powershell
+python generate_visuals.py --image dataset/images/5.1.11.jpg
+```
+
+Expected output files:
+- `bi_histogram_visual.png`
+- `busyness_map_visual.png`
+- `enhanced_for_visual_report.png`
+
+## Pipeline CLI Reference
+
+```text
+python python/pipeline.py <input> [--kappa K] [--show-diff] [--diff-gain G] [--threads N]
+```
+
+- `<input>`: image path, video path, or `0` for webcam
+- `--kappa`: sharpening strength (`default: 5.0`)
+- `--show-diff`: display third panel showing absolute-difference heatmap
+- `--diff-gain`: diff-map amplification (`default: 5.0`)
+- `--threads`: OpenMP thread count (`default: 4`)
+
+## Troubleshooting
+
+### `No module named 'he_core'`
+
+Rebuild module:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_he_core.ps1 -Clean
+```
+
+### `Python libraries not found` during CMake configure
+
+You are likely using the wrong Python executable in cache. Run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_he_core.ps1 -Clean
+```
+
+### `DLL load failed while importing he_core`
+
+The pipeline already adds `C:\msys64\ucrt64\bin` at runtime. If needed, ensure this folder exists and MSYS2 UCRT64 is installed.
+
+### Output video plays too fast
+
+Current pipeline writes with source FPS and normal playback speed. Rebuild and rerun if using an old binary/script combination.
+
+## Final Notes
+
+- Use `build_he_core.ps1` as the default build entrypoint for consistency.
+- For day-to-day `core.cpp` edits, rebuild only.
+- Keep dataset media under `dataset/images` and `dataset/videos` and run commands exactly as shown above.

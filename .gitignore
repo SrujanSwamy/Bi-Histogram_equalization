@@ -72,6 +72,9 @@ week2_busyness_map.png
 *.png
 !test_image.jpg
 
+# Generated videos
+*_enhanced.mp4
+
 # Editor / OS files
 # =========================
 .vscode/
@@ -86,7 +89,13 @@ Thumbs.db
 # =========================
 week1_*.png
 week2_*.png
-*.png
+
+# Runtime/output folders
+output/
+temp/
+_archive/
 
 # Archives
 *.zip
+
+test.cpp

@@ -76,10 +76,10 @@ inline py::tuple segment_histogram(npy<uint8_t> v) {
     const uint8_t* ptr = static_cast<const uint8_t*>(buf.ptr);
     int N = static_cast<int>(buf.shape[0] * buf.shape[1]);
 
-    // Mean intensity
+    // Mean intensity — paper Eq.(10): Im = floor(sum(Ik * nk) / N)
     double sum = 0.0;
     for (int i = 0; i < N; ++i) sum += ptr[i];
-    int I_m = static_cast<int>(std::round(sum / N));
+    int I_m = static_cast<int>(std::floor(sum / N));
     I_m = clamp_idx(I_m, 0, 254);  // both sub-hists must have ≥1 bin
 
     // Full histogram
@@ -105,11 +105,12 @@ inline py::tuple segment_histogram(npy<uint8_t> v) {
 //  Adaptive Plateau Limits & Histogram Clipping
 // ============================================================================
 //
-// For each sub-histogram (lower / upper):
-//   T   = N_sub / n_bins                 (mean bin frequency)
-//   E   = −Σ p_i log₂(p_i)              (discrete entropy)
-//   Emax= log₂(n_bins)                  (maximum possible entropy)
-//   PL  = max(1, T × E / Emax)          (adaptive plateau limit)
+// Paper Equations (12) and (13):
+//   PLL = (H_hL / H_I) * (1/(I_m+1))     * sum_{k=0}^{I_m}   hL(k)
+//   PLH = (H_hH / H_I) * (1/(L-I_m-1))  * sum_{k=I_m+1}^{L-1} hH(k)
+//
+// where H_I, H_hL, H_hH are discrete entropies of the full histogram,
+// lower sub-histogram, and upper sub-histogram respectively (Eq.14).
 //
 // Bins exceeding PL are clipped.  A new CDF is built for each sub-histogram.
 // Returns a 256-element CDF array (lower CDF in [0..I_m], upper in [I_m+1..255]).
@@ -126,8 +127,8 @@ inline npy<double> compute_apl_and_clip(npy<int> hist_arr, int I_m) {
     std::vector<double> hist(256);
     for (int i = 0; i < 256; ++i) hist[i] = static_cast<double>(hist_in[i]);
 
-    // --- Helper lambda: entropy of a contiguous sub-range ----------------
-    auto sub_entropy = [&](int lo, int hi) -> double {
+    // --- Discrete entropy helper (Eq. 14): H = -sum p_i * log2(p_i) --------
+    auto discrete_entropy = [&](int lo, int hi) -> double {
         double N_sub = 0.0;
         for (int i = lo; i <= hi; ++i) N_sub += hist[i];
         if (N_sub <= 0.0) return 0.0;
@@ -142,31 +143,41 @@ inline npy<double> compute_apl_and_clip(npy<int> hist_arr, int I_m) {
         return ent;
     };
 
-    // --- Lower sub-histogram [0, I_m] -----------------------------------
+    // --- Entropy of full input histogram (H_I) -------------------------------
+    double H_I = discrete_entropy(0, 255);
+    if (H_I < 1e-10) H_I = 1e-10;  // guard against zero-entropy degenerate images
+
+    // --- Lower sub-histogram [0, I_m] (paper Eq. 12) -----------------------
+    //   Avg_L  = (1 / n_L) * sum hL(k)   where n_L = I_m + 1
+    //   PL_L   = (H_hL / H_I) * Avg_L
     int    n_L = I_m + 1;
     double N_L = 0.0;
     for (int i = 0; i <= I_m; ++i) N_L += hist[i];
-    double T_L     = (n_L > 0 && N_L > 0) ? N_L / n_L : 0.0;
-    double E_L     = sub_entropy(0, I_m);
-    double Emax_L  = (n_L > 1) ? std::log2(static_cast<double>(n_L)) : 1.0;
-    double PL_L    = std::max(1.0, T_L * E_L / (Emax_L + 1e-10));
+    double Avg_L = (n_L > 0) ? N_L / n_L : 0.0;
+    double H_hL  = discrete_entropy(0, I_m);
+    double PL_L  = (H_hL / H_I) * Avg_L;
+    PL_L = std::max(1.0, PL_L);   // plateau must be ≥ 1
 
-    // --- Upper sub-histogram [I_m+1, 255] --------------------------------
-    int    n_H = 255 - I_m;
+    // --- Upper sub-histogram [I_m+1, 255] (paper Eq. 13) -------------------
+    //   n_H    = L - I_m - 1   (= 255 - I_m bins, since L=256)
+    //   Avg_H  = (1 / n_H) * sum hH(k)
+    //   PL_H   = (H_hH / H_I) * Avg_H
+    int    n_H = 255 - I_m;  // number of bins in upper sub-histogram
     double N_H = 0.0;
     for (int i = I_m + 1; i <= 255; ++i) N_H += hist[i];
-    double T_H     = (n_H > 0 && N_H > 0) ? N_H / n_H : 0.0;
-    double E_H     = sub_entropy(I_m + 1, 255);
-    double Emax_H  = (n_H > 1) ? std::log2(static_cast<double>(n_H)) : 1.0;
-    double PL_H    = std::max(1.0, T_H * E_H / (Emax_H + 1e-10));
+    double Avg_H = (n_H > 0) ? N_H / n_H : 0.0;
+    double H_hH  = discrete_entropy(I_m + 1, 255);
+    double PL_H  = (H_hH / H_I) * Avg_H;
+    PL_H = std::max(1.0, PL_H);
 
-    // --- Clip ------------------------------------------------------------
+    // --- Clip (paper Eq. 15-16) ---------------------------------------------
     for (int i = 0; i <= I_m; ++i)
         if (hist[i] > PL_L) hist[i] = PL_L;
     for (int i = I_m + 1; i <= 255; ++i)
         if (hist[i] > PL_H) hist[i] = PL_H;
 
-    // --- Rebuild PDF & CDF after clipping --------------------------------
+    // --- Rebuild PDF & CDF after clipping (paper Eq. 17-18) ----------------
+    // Recount after clipping
     N_L = 0.0;
     for (int i = 0; i <= I_m; ++i) N_L += hist[i];
     N_H = 0.0;
@@ -176,7 +187,7 @@ inline npy<double> compute_apl_and_clip(npy<int> hist_arr, int I_m) {
     double* cdf = static_cast<double*>(result.request().ptr);
     std::memset(cdf, 0, 256 * sizeof(double));
 
-    // Lower CDF [0, I_m]
+    // Lower CDF [0, I_m]: cdf(I_m) = 1 (paper Eq. 18)
     if (N_L > 0.0) {
         double cum = 0.0;
         for (int i = 0; i <= I_m; ++i) {
@@ -184,7 +195,7 @@ inline npy<double> compute_apl_and_clip(npy<int> hist_arr, int I_m) {
             cdf[i] = cum;
         }
     }
-    // Upper CDF [I_m+1, 255]
+    // Upper CDF [I_m+1, 255]: cdf(L-1) = 1 (paper Eq. 18)
     if (N_H > 0.0) {
         double cum = 0.0;
         for (int i = I_m + 1; i <= 255; ++i) {
