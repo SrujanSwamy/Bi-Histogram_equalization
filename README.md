@@ -1,4 +1,4 @@
-# Edge-Enhancing Bi-Histogram Equalization (Final)
+# Edge-Enhancing Bi-Histogram Equalization 
 
 This project implements an edge-enhancing bi-histogram equalization pipeline with:
 - C++ kernels exposed to Python via Pybind11 (`he_core`)
