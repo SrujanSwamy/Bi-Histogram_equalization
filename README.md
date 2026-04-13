@@ -5,6 +5,7 @@ This project implements an edge-enhancing bi-histogram equalization pipeline wit
 - OpenMP acceleration and runtime thread control
 - Unified image/video/webcam processing in Python
 - Benchmark and visualization utilities
+- FastAPI dashboard backend with SSE streaming and browser frontend
 
 The current codebase is aligned to the paper-oriented pipeline used in your final version, including dynamic `mu` from guided-filter output and `kappa` control from CLI.
 
@@ -25,7 +26,13 @@ CV project/
 │   └── pipeline.py
 ├── benchmark_omp.py
 ├── generate_visuals.py
+├── server.py
 ├── requirements.txt
+├── frontend/
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js
+├── outputs/
 └── dataset/
         ├── images/
         └── videos/
@@ -103,6 +110,41 @@ Re-run full configure only if:
 - `build/` was deleted
 
 ## Run Commands
+
+### 0) Interactive Dashboard (FastAPI + Frontend)
+
+Start the dashboard API server:
+
+```powershell
+uvicorn server:app --host 127.0.0.1 --port 8001 --reload
+```
+
+Open in browser:
+
+```text
+http://127.0.0.1:8001/frontend/
+```
+
+Dashboard endpoints:
+- `POST /process/image`
+- `POST /process/video` (SSE stream)
+- `GET /webcam/stream` (SSE stream)
+- `POST /webcam/stop`
+- `POST /benchmark`
+- `GET /health`
+
+Video outputs are written to:
+
+```text
+outputs/<video_name>/
+```
+
+The dashboard saves:
+- original processed video
+- enhanced processed video
+- diff heatmap video
+
+These files are served back to the frontend from `/outputs/...` for final playback after processing completes.
 
 ### 1) Main Pipeline (Image)
 
@@ -194,3 +236,4 @@ Current pipeline writes with source FPS and normal playback speed. Rebuild and r
 - Use `build_he_core.ps1` as the default build entrypoint for consistency.
 - For day-to-day `core.cpp` edits, rebuild only.
 - Keep dataset media under `dataset/images` and `dataset/videos` and run commands exactly as shown above.
+- For dashboard video mode, verify `outputs/` is writable so final playback files can be generated and served.
