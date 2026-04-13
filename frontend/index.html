@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EEBHE Interactive Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/frontend/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <section class="panel">
+      <div class="header">
+        <div class="brand">
+          <div class="logo">◈</div>
+          <div>
+            <h1 class="title">Edge-Enhancing Bi-Histogram Equalisation</h1>
+            <p class="subtitle">Interactive Research Dashboard</p>
+          </div>
+        </div>
+        <div id="statusPill" class="status-pill">
+          <span class="dot"></span>
+          <span id="statusLabel">IDLE</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">Input Panel</div>
+      <div class="tabs">
+        <button class="tab active" data-mode="image">▣ IMAGE</button>
+        <button class="tab" data-mode="video">▶ VIDEO</button>
+        <button class="tab" data-mode="webcam">◉ WEBCAM</button>
+      </div>
+      <div class="input-body">
+        <input id="fileInput" type="file" hidden />
+        <div id="dropZone" class="drop-zone">
+          <div>
+            <div style="font-size: 15px; color: var(--text); margin-bottom: 5px;">Drag and drop media here</div>
+            <div>or click to browse</div>
+          </div>
+        </div>
+        <div id="webcamActions" class="webcam-actions">
+          <button id="webcamToggle" class="btn">▶ START STREAM</button>
+          <span style="color: var(--text-2); font-family: 'IBM Plex Mono', monospace; font-size: 12px;">Live SSE stream from camera device 0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">Viewer Panel</div>
+      <div class="viewer-grid">
+        <div class="viewer-card" id="origCard">
+          <div class="viewer-top"><span>ORIGINAL</span><span id="origRes">-</span></div>
+          <div class="viewer-media">
+            <img id="origImg" alt="Original" />
+            <video id="origVideo" controls playsinline preload="metadata"></video>
+            <div class="viewer-empty" id="origEmpty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12h20"/></svg>
+              <span>—</span>
+            </div>
+            <div class="viewer-loading">PROCESSING...</div>
+          </div>
+        </div>
+        <div class="viewer-card" id="enhCard">
+          <div class="viewer-top"><span>ENHANCED</span><span id="enhRes">-</span></div>
+          <div class="viewer-media">
+            <img id="enhImg" alt="Enhanced" />
+            <video id="enhVideo" controls playsinline preload="metadata"></video>
+            <div class="viewer-empty" id="enhEmpty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12h20"/></svg>
+              <span>—</span>
+            </div>
+            <div class="viewer-loading">PROCESSING...</div>
+          </div>
+        </div>
+        <div class="viewer-card" id="heatCard">
+          <div class="viewer-top"><span>DIFF HEATMAP</span><span id="heatRes">-</span></div>
+          <div class="viewer-media">
+            <img id="heatImg" alt="Heatmap" />
+            <video id="heatVideo" controls playsinline preload="metadata"></video>
+            <div class="viewer-empty" id="heatEmpty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12h20"/></svg>
+              <span>—</span>
+            </div>
+            <div class="viewer-loading">PROCESSING...</div>
+            <div class="heat-scale"></div>
+            <div class="heat-labels">HIGH Δ<br />LOW Δ</div>
+          </div>
+        </div>
+      </div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+        <div id="progressText" class="progress-text">PROCESSING FRAME 0 / 0</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">Metrics Panel</div>
+      <div class="metrics-grid">
+        <div class="card">
+          <div class="card-head">Scalar Metrics</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th class="orig-col">Original</th>
+                <th class="enh-col">Enhanced</th>
+              </tr>
+            </thead>
+            <tbody id="metricsBody"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-head">Intensity Distribution</div>
+          <div class="chart-shell"><canvas id="histChart"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="visualsPanel" class="panel hidden">
+      <div class="panel-head">Pipeline Visualisations</div>
+      <div id="visualGrid" class="visual-grid">
+        <div class="visual-card"><div class="visual-title">Bi-Histogram + Plateau Markers</div><img id="visBi" alt="Bi histogram" /></div>
+        <div class="visual-card"><div class="visual-title">Busyness Map</div><img id="visBusy" alt="Busyness map" /></div>
+        <div class="visual-card"><div class="visual-title">Intensity-Frequency Comparison</div><img id="visFreq" alt="Intensity frequency" /></div>
+      </div>
+    </section>
+
+    <section id="academicPanel" class="panel hidden">
+      <div class="panel-head">Method Comparison</div>
+      <div class="method-subtitle">Original  ·  OpenCV Histogram Equalisation  ·  Custom Bi-HE + Guided Filter</div>
+      <div style="padding: 0 12px 12px; overflow-x: auto;">
+        <table>
+          <thead>
+            <tr><th>Metric</th><th>Original</th><th>OpenCV HE</th><th>Custom Bi-HE+GF</th></tr>
+          </thead>
+          <tbody id="academicBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="benchmarkPanel" class="panel hidden">
+      <div class="panel-head">OpenMP Thread Scaling</div>
+      <div class="bench-wrap">
+        <div class="card">
+          <div class="chart-shell"><canvas id="benchChart"></canvas></div>
+        </div>
+        <div class="card" style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr><th>Threads</th><th>Total Time (ms)</th><th>Avg FPS</th><th>Speedup</th></tr>
+            </thead>
+            <tbody id="benchBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="lightbox" class="lightbox">
+    <button id="closeLightbox" class="close-lightbox">×</button>
+    <img id="lightboxImg" alt="Expanded visual" />
+  </div>
+
+  <div id="toasts" class="toasts"></div>
+
+  <script src="/frontend/app.js"></script>
+</body>
+</html>

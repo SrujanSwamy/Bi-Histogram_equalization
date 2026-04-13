@@ -94,7 +94,7 @@ week2_*.png
 output/
 temp/
 _archive/
-
+outputs/
 # Archives
 *.zip
 
